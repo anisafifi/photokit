@@ -6,6 +6,7 @@
 
 # Local PhotoKit runs
 /export/
+/photos/
 /preview.jpg
 /preview.png
 /photokit.yaml
