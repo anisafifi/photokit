@@ -1,0 +1,38 @@
+# PhotoKit preset using every supported option.
+# Check it with: photokit preset validate presets/full.yaml
+version: 1                       # required, must be 1
+name: full
+description: Every supported preset option, with sample values
+
+# All fields are optional. Omitted fields are left untouched in the photo.
+# Each value is written identically to EXIF, IPTC and XMP.
+metadata:
+  creator: Anis Afifi                      # EXIF Artist / IPTC By-line / XMP dc:Creator
+  copyright: © 2026 Anis Afifi             # EXIF Copyright / IPTC CopyrightNotice / XMP dc:Rights
+  rights: All rights reserved              # XMP xmpRights:UsageTerms
+  #title: Untitled                          # IPTC ObjectName / XMP dc:Title
+  description: Photograph by Anis Afifi    # EXIF ImageDescription / IPTC Caption-Abstract / XMP dc:Description
+  keywords:                                # replaces existing keywords (IPTC Keywords / XMP dc:Subject)
+    - photography
+    - portrait
+  credit: Anis Afifi Photography           # IPTC Credit / XMP photoshop:Credit
+  source: Anis Afifi                       # IPTC Source / XMP photoshop:Source
+  instructions: Contact the photographer before reuse   # IPTC SpecialInstructions
+
+# Transparent PNG signature (JPEG and PNG photos only).
+watermark:
+  enabled: true                  # false disables the signature without deleting this section
+  image: ../assets/signature.png # relative paths resolve against THIS file's directory
+  position: bottom-right         # top-left | top-center | top-right
+                                 # center-left | center | center-right
+                                 # bottom-left | bottom-center | bottom-right
+  opacity: 0.8                   # 0 < x <= 1
+  scale: 0.12                    # signature width as a fraction of the image width, 0 < x <= 1
+  margin: 32                     # pixels from the nearest edge(s), >= 0
+
+export:
+  preserve_original: true        # must stay true; presets never modify source images
+  format: original               # original | jpeg | png (jpeg/png convert every JPEG/PNG; RAW is skipped)
+  quality: 100                   # JPEG quality, 1-100 (default 92)
+  directory: ./export            # relative to where you run photokit; -o overrides it
+  suffix: -signed                # added before the extension: IMG_001-signed.jpg

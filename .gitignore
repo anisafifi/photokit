@@ -1,0 +1,22 @@
+# Build output
+/photokit
+/photokit.exe
+/dist/
+/bin/
+
+# Local PhotoKit runs
+/export/
+/preview.jpg
+/preview.png
+/photokit.yaml
+
+# Go
+*.test
+*.out
+coverage.txt
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
