@@ -1,0 +1,81 @@
+# Every option PhotoKit supports. Copy this file and delete what you don't need.
+# Omitted fields are simply left untouched on the photos.
+#
+#   photokit preset validate presets/full.yaml
+#   photokit process ./photos -p full --dry-run
+version: 1
+name: full
+description: Every supported option, documented
+
+metadata:
+  # ---- Core -------------------------------------------------------------
+  creator: "Anis Afifi"
+  copyright: "© 2026 Anis Afifi"
+  rights: "All rights reserved"
+  web_statement: "https://example.com/license"   # URL of the license / rights statement
+  title: "Untitled"
+  headline: "Golden hour over the river"
+  description: "Evening light on the river."
+  keywords:                  # replaces existing keywords; empty entries are rejected
+    - photography
+    - landscape
+  credit: "Anis Afifi"
+  source: "Anis Afifi"
+  instructions: "Contact before commercial use"
+  writer: "Anis Afifi"       # caption writer
+  owner: "Anis Afifi"        # image owner
+
+  # ---- Organising -------------------------------------------------------
+  rating: 5                  # 0-5
+  label: Green               # colour label
+
+  # ---- Where and when ---------------------------------------------------
+  location: "Ramna Park"     # sub-location
+  city: Dhaka
+  state: Dhaka
+  country: Bangladesh
+  country_code: BD           # ISO code
+  latitude: 23.8103          # decimal degrees; south/west are negative. Give both or neither
+  longitude: 90.4125
+  altitude: 12               # metres, negative below sea level; needs latitude + longitude
+  date_taken: "2026-05-01 10:30:00+06:00"   # quote it; zone is optional
+
+  # ---- Photographer contact (IPTC Core) -----------------------------------
+  contact:
+    email: me@example.com
+    phone: "+880 1700 000000"
+    url: https://example.com
+    address: "1 Example Road"
+    city: Dhaka
+    region: Dhaka
+    postal_code: "1207"
+    country: Bangladesh
+
+  # ---- Any other ExifTool tag ---------------------------------------------
+  # Find names with: photokit metadata tags FILTER
+  tags:
+    Comment: "Shot on film"
+    "XMP-dc:Format": image/jpeg
+    "XMP-dc:Contributor": [Alice, Bob]     # a list writes a list tag
+    "XMP-xmp:Label": null                  # null (or "") deletes the tag
+    "GPSAltitudeRef#": 0                   # trailing # writes the raw numeric value
+
+  # ---- Deletions and privacy ----------------------------------------------
+  remove:                    # wildcards allowed
+    - "MakerNotes:*"
+  strip: none                # none | gps | all  (applied before everything above)
+
+watermark:
+  enabled: true
+  image: ../assets/signature.png   # relative to THIS file
+  position: bottom-right           # top-left|top-center|top-right|center-left|center|center-right|bottom-left|bottom-center|bottom-right
+  opacity: 0.8                     # 0 < x <= 1
+  scale: 0.12                      # fraction of image width, 0 < x <= 1
+  margin: 32                       # pixels
+
+export:
+  preserve_original: true    # must stay true
+  format: original           # original | jpeg | png
+  quality: 100               # JPEG quality 1-100
+  directory: ./export
+  suffix: -signed

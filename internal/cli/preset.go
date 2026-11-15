@@ -92,10 +92,19 @@ func newPresetValidateCmd(e *env) *cobra.Command {
 			bad := 0
 			for _, a := range args {
 				path, err := preset.Find(a, e.cfg.SearchDirs())
+				note := ""
 				if err == nil {
 					var p *preset.Preset
 					if p, err = preset.LoadUnvalidated(path); err == nil {
 						err = p.Validate()
+						if err == nil && (len(p.Metadata.Tags) > 0 || len(p.Metadata.Remove) > 0) {
+							// Confirm the raw tag names exist, when ExifTool is available.
+							if eng, eerr := e.Engine(cmd.Context()); eerr != nil {
+								note = "tag names not verified (ExifTool not found)"
+							} else {
+								err = eng.CheckTags(cmd.Context(), p.Metadata)
+							}
+						}
 					}
 				}
 				if err != nil {
@@ -107,6 +116,9 @@ func newPresetValidateCmd(e *env) *cobra.Command {
 					continue
 				}
 				fmt.Fprintf(w, "OK       %s\n", path)
+				if note != "" {
+					fmt.Fprintf(w, "  note: %s\n", note)
+				}
 			}
 			if bad > 0 {
 				return fmt.Errorf("%d preset(s) invalid", bad)

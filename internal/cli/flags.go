@@ -2,12 +2,14 @@ package cli
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 
 	"photokit/internal/app"
 	"photokit/internal/batch"
 	"photokit/internal/domain"
+	"photokit/internal/metadata"
 	"photokit/internal/output"
 )
 
@@ -35,6 +37,20 @@ type metaFlags struct {
 	title, credit, source, instructions     string
 	keywords                                []string
 	appendKeywords                          bool
+
+	headline, writer, owner, webStatement, label string
+	rating                                       int
+
+	location, city, state, country, countryCode string
+	latitude, longitude, altitude               float64
+	dateTaken                                   string
+
+	contactEmail, contactPhone, contactURL, contactAddress string
+	contactCity, contactRegion, contactPostal, contactCtry string
+
+	tags   []string // NAME=VALUE
+	remove []string
+	strip  string
 }
 
 func (f *metaFlags) add(cmd *cobra.Command, withAppend bool) {
@@ -42,23 +58,110 @@ func (f *metaFlags) add(cmd *cobra.Command, withAppend bool) {
 	fl.StringVar(&f.creator, "creator", "", "creator / photographer name")
 	fl.StringVar(&f.copyright, "copyright", "", `copyright notice, e.g. "© 2026 Your Name"`)
 	fl.StringVar(&f.rights, "rights", "", `usage terms, e.g. "All rights reserved"`)
-	fl.StringVar(&f.description, "description", "", "caption / description")
+	fl.StringVar(&f.webStatement, "web-statement", "", "URL of the licence / rights statement")
 	fl.StringVar(&f.title, "title", "", "title")
+	fl.StringVar(&f.headline, "headline", "", "headline")
+	fl.StringVar(&f.description, "description", "", "caption / description")
+	fl.StringVar(&f.writer, "writer", "", "caption writer")
 	fl.StringSliceVar(&f.keywords, "keywords", nil, "keyword (repeat the flag or separate with commas)")
 	fl.StringVar(&f.credit, "credit", "", "credit line")
 	fl.StringVar(&f.source, "source", "", "source")
 	fl.StringVar(&f.instructions, "instructions", "", "special instructions")
+	fl.StringVar(&f.owner, "owner", "", "camera owner")
+	fl.StringVar(&f.label, "label", "", "colour label, e.g. Red")
+	fl.IntVar(&f.rating, "rating", 0, "star rating, 0-5")
+
+	fl.StringVar(&f.location, "location", "", "sub-location, e.g. a venue or neighbourhood")
+	fl.StringVar(&f.city, "city", "", "city")
+	fl.StringVar(&f.state, "state", "", "state / province")
+	fl.StringVar(&f.country, "country", "", "country name")
+	fl.StringVar(&f.countryCode, "country-code", "", "ISO country code, e.g. BD")
+	fl.Float64Var(&f.latitude, "latitude", 0, "GPS latitude in decimal degrees (south is negative); needs --longitude")
+	fl.Float64Var(&f.longitude, "longitude", 0, "GPS longitude in decimal degrees (west is negative); needs --latitude")
+	fl.Float64Var(&f.altitude, "altitude", 0, "GPS altitude in metres (below sea level is negative); needs --latitude/--longitude")
+	fl.StringVar(&f.dateTaken, "date-taken", "", `capture date, e.g. "2026-05-01 10:30:00" or "2026-05-01T10:30:00+06:00"`)
+
+	fl.StringVar(&f.contactEmail, "contact-email", "", "photographer contact: email")
+	fl.StringVar(&f.contactPhone, "contact-phone", "", "photographer contact: phone")
+	fl.StringVar(&f.contactURL, "contact-url", "", "photographer contact: website")
+	fl.StringVar(&f.contactAddress, "contact-address", "", "photographer contact: street address")
+	fl.StringVar(&f.contactCity, "contact-city", "", "photographer contact: city")
+	fl.StringVar(&f.contactRegion, "contact-region", "", "photographer contact: state / region")
+	fl.StringVar(&f.contactPostal, "contact-postal-code", "", "photographer contact: postal code")
+	fl.StringVar(&f.contactCtry, "contact-country", "", "photographer contact: country")
+
+	fl.StringArrayVar(&f.tags, "tag", nil, `set any ExifTool tag: NAME=VALUE, e.g. --tag "XMP-dc:Format=image/jpeg" (repeat for several values or tags; empty value deletes)`)
+	fl.StringSliceVar(&f.remove, "remove", nil, `delete tags: NAME, Group:NAME or Group:all, wildcards allowed, e.g. --remove Comment --remove "XMP:all"`)
+	fl.StringVar(&f.strip, "strip", "", "remove metadata first: gps (location only) or all (everything except colour profile and orientation)")
 	if withAppend {
 		fl.BoolVar(&f.appendKeywords, "append-keywords", false, "add --keywords to the existing keywords instead of replacing them")
 	}
 }
 
-func (f *metaFlags) value() domain.Metadata {
-	return domain.Metadata{
+// value assembles the metadata the user asked for. Numeric flags only count
+// when they were actually passed, so 0 stays a valid value.
+func (f *metaFlags) value(cmd *cobra.Command) (domain.Metadata, error) {
+	ch := cmd.Flags().Changed
+	md := domain.Metadata{
 		Creator: f.creator, Copyright: f.copyright, Rights: f.rights,
 		Description: f.description, Title: f.title, Keywords: f.keywords,
 		Credit: f.credit, Source: f.source, Instructions: f.instructions,
+		Headline: f.headline, Writer: f.writer, Owner: f.owner, WebStatement: f.webStatement, Label: f.label,
+		Location: f.location, City: f.city, State: f.state, Country: f.country, CountryCode: f.countryCode,
+		DateTaken: f.dateTaken, Remove: f.remove, Strip: f.strip,
+		Contact: domain.Contact{
+			Email: f.contactEmail, Phone: f.contactPhone, URL: f.contactURL, Address: f.contactAddress,
+			City: f.contactCity, Region: f.contactRegion, PostalCode: f.contactPostal, Country: f.contactCtry,
+		},
 	}
+	if ch("rating") {
+		v := f.rating
+		md.Rating = &v
+	}
+	if ch("latitude") {
+		v := f.latitude
+		md.Latitude = &v
+	}
+	if ch("longitude") {
+		v := f.longitude
+		md.Longitude = &v
+	}
+	if ch("altitude") {
+		v := f.altitude
+		md.Altitude = &v
+	}
+	for _, t := range f.tags {
+		name, val, ok := strings.Cut(t, "=")
+		name = strings.TrimSpace(name)
+		if !ok || name == "" {
+			return md, domain.Invalidf("--tag %q must look like NAME=VALUE (for example --tag \"Comment=hello\")", t)
+		}
+		if md.Tags == nil {
+			md.Tags = map[string]domain.TagValue{}
+		}
+		if val == "" {
+			md.Tags[name] = nil // empty value deletes the tag
+			continue
+		}
+		md.Tags[name] = append(md.Tags[name], val)
+	}
+	return md, nil
+}
+
+// readFlags choose how much detail the read-only commands print.
+type readFlags struct {
+	all  bool
+	tags []string
+}
+
+func (f *readFlags) add(cmd *cobra.Command) {
+	fl := cmd.Flags()
+	fl.BoolVar(&f.all, "all", false, "show every tag ExifTool finds, grouped (EXIF, IPTC, XMP, MakerNotes, ...)")
+	fl.StringArrayVar(&f.tags, "tag", nil, `show only matching tags: NAME or Group:NAME, wildcards allowed (e.g. --tag Artist --tag "XMP-dc:*")`)
+}
+
+func (f *readFlags) options() metadata.InspectOptions {
+	return metadata.InspectOptions{All: f.all, Tags: f.tags}
 }
 
 // wmFlags carry the signature settings.

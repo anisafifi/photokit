@@ -257,3 +257,286 @@ func TestHelpAndVersionFlag(t *testing.T) {
 		t.Errorf("completion: %d", code)
 	}
 }
+
+func showJSON(t *testing.T, dir string, args ...string) []map[string]any {
+	t.Helper()
+	out, errs, code := run(t, dir, append(args, "--format", "json")...)
+	if code != 0 {
+		t.Fatalf("exit %d: %s %s", code, out, errs)
+	}
+	var v []map[string]any
+	if err := json.Unmarshal([]byte(out), &v); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	return v
+}
+
+// tagsOf returns the "tags" object of an info result; an absent key means no matches.
+func tagsOf(v map[string]any) map[string]any {
+	m, _ := v["tags"].(map[string]any)
+	return m
+}
+
+func TestMetadataSetExtendedFields(t *testing.T) {
+	testutil.RequireExifTool(t)
+	dir := project(t)
+	out, errs, code := run(t, dir, "metadata", "set", "photos/a.jpg", "-o", "m",
+		"--creator", "Jane", "--headline", "Golden hour", "--writer", "Ed", "--owner", "Jane", "--label", "Green", "--rating", "5",
+		"--location", "Ramna", "--city", "Dhaka", "--state", "Dhaka", "--country", "Bangladesh", "--country-code", "bd",
+		"--latitude", "-33.9", "--longitude", "-18.4", "--altitude", "-30", "--date-taken", "2026-05-01T10:30:00+06:00",
+		"--contact-email", "j@x.y", "--contact-phone", "+880", "--contact-url", "https://x.y", "--contact-city", "Dhaka", "--contact-postal-code", "1207",
+		"--web-statement", "https://x.y/license")
+	if code != 0 {
+		t.Fatalf("exit %d: %s %s", code, out, errs)
+	}
+	m := showJSON(t, dir, "metadata", "show", "m/a.jpg")[0]["metadata"].(map[string]any)
+	for k, want := range map[string]any{
+		"creator": "Jane", "headline": "Golden hour", "writer": "Ed", "owner": "Jane", "label": "Green", "rating": float64(5),
+		"location": "Ramna", "city": "Dhaka", "state": "Dhaka", "country": "Bangladesh", "country_code": "BD",
+		"web_statement": "https://x.y/license",
+	} {
+		if m[k] != want {
+			t.Errorf("%s = %v, want %v", k, m[k], want)
+		}
+	}
+	if lat, _ := m["latitude"].(float64); lat > -33.89 || lat < -33.91 {
+		t.Errorf("southern latitude lost its sign: %v", m["latitude"])
+	}
+	if lon, _ := m["longitude"].(float64); lon > -18.39 || lon < -18.41 {
+		t.Errorf("western longitude lost its sign: %v", m["longitude"])
+	}
+	if alt, _ := m["altitude"].(float64); alt > -29.9 || alt < -30.1 {
+		t.Errorf("below-sea-level altitude lost its sign: %v", m["altitude"])
+	}
+	c := m["contact"].(map[string]any)
+	if c["email"] != "j@x.y" || c["postal_code"] != "1207" || c["city"] != "Dhaka" {
+		t.Errorf("contact: %v", c)
+	}
+	if o, _, _ := run(t, dir, "metadata", "show", "m/a.jpg"); !strings.Contains(o, "5 / 5") || !strings.Contains(o, "Bangladesh (BD)") || !strings.Contains(o, "-33.900000, -18.400000") {
+		t.Errorf("table view:\n%s", o)
+	}
+}
+
+func TestRatingZeroAndGPSZeroAreRealValues(t *testing.T) {
+	testutil.RequireExifTool(t)
+	dir := project(t)
+	if _, errs, code := run(t, dir, "metadata", "set", "photos/a.jpg", "-o", "z", "--rating", "0", "--latitude", "0", "--longitude", "0"); code != 0 {
+		t.Fatal(errs)
+	}
+	m := showJSON(t, dir, "metadata", "show", "z/a.jpg")[0]["metadata"].(map[string]any)
+	if r, ok := m["rating"]; !ok || r != float64(0) {
+		t.Errorf("rating 0 must be written: %v", m)
+	}
+	if _, ok := m["latitude"]; !ok {
+		t.Errorf("latitude 0 must be written: %v", m)
+	}
+}
+
+func TestSetRawTagsRemoveAndStrip(t *testing.T) {
+	testutil.RequireExifTool(t)
+	dir := project(t)
+	if _, errs, code := run(t, dir, "metadata", "set", "photos/a.jpg", "-o", "s1", "--latitude", "10", "--longitude", "20", "--creator", "Keep",
+		"--tag", "Comment=hello, world", "--tag", "XMP-dc:Subject=one", "--tag", "XMP-dc:Subject=two"); code != 0 {
+		t.Fatal(errs)
+	}
+	tags := tagsOf(showJSON(t, dir, "info", "s1/a.jpg", "--tag", "Comment", "--tag", "XMP-dc:Subject")[0])
+	if tags["File:Comment"] != "hello, world" {
+		t.Errorf("a comma inside --tag must stay part of the value: %v", tags)
+	}
+	if subj, _ := tags["XMP-dc:Subject"].([]any); len(subj) != 2 {
+		t.Errorf("repeating --tag must build a list: %v", tags)
+	}
+
+	if _, errs, code := run(t, dir, "metadata", "set", "s1/a.jpg", "-o", "s2", "--strip", "gps", "--remove", "Comment"); code != 0 {
+		t.Fatal(errs)
+	}
+	m := showJSON(t, dir, "info", "s2/a.jpg")[0]["metadata"].(map[string]any)
+	if _, has := m["latitude"]; has || m["creator"] != "Keep" {
+		t.Errorf("strip gps must drop location only: %v", m)
+	}
+	left := tagsOf(showJSON(t, dir, "info", "s2/a.jpg", "--tag", "Comment")[0])
+	if len(left) != 0 {
+		t.Errorf("comment must be removed: %v", left)
+	}
+
+	if _, errs, code := run(t, dir, "metadata", "set", "s1/a.jpg", "-o", "s3", "--strip", "all", "--copyright", "© Fresh"); code != 0 {
+		t.Fatal(errs)
+	}
+	m = showJSON(t, dir, "info", "s3/a.jpg")[0]["metadata"].(map[string]any)
+	if m["copyright"] != "© Fresh" || m["creator"] != nil {
+		t.Errorf("strip all keeps only what is written afterwards: %v", m)
+	}
+
+	// an empty value deletes the tag
+	if _, errs, code := run(t, dir, "metadata", "set", "s1/a.jpg", "-o", "s4", "--tag", "XMP-dc:Subject="); code != 0 {
+		t.Fatal(errs)
+	}
+	if left := tagsOf(showJSON(t, dir, "info", "s4/a.jpg", "--tag", "XMP-dc:Subject")[0]); len(left) != 0 {
+		t.Errorf("--tag NAME= must delete: %v", left)
+	}
+}
+
+func TestMetadataSetRejectsBadInputBeforeWriting(t *testing.T) {
+	testutil.RequireExifTool(t)
+	dir := project(t)
+	cases := map[string]struct {
+		args []string
+		want string
+	}{
+		"typo":         {[]string{"--tag", "Artsit=x"}, "did you mean Artist"},
+		"unknown":      {[]string{"--tag", "Nonsense:Thing=x"}, "is not a tag ExifTool can write"},
+		"csv option":   {[]string{"--tag", "csv=/etc/passwd"}, "is not a tag ExifTool can write"},
+		"no equals":    {[]string{"--tag", "Comment"}, "NAME=VALUE"},
+		"bad remove":   {[]string{"--remove", "x=y"}, "metadata.remove"},
+		"lat only":     {[]string{"--latitude", "10"}, "together"},
+		"lat range":    {[]string{"--latitude", "95", "--longitude", "0"}, "between -90 and 90"},
+		"rating":       {[]string{"--rating", "6"}, "between 0 and 5"},
+		"date":         {[]string{"--date-taken", "soon"}, "cannot understand date"},
+		"strip":        {[]string{"--strip", "some"}, "none, gps, all"},
+		"country code": {[]string{"--country-code", "Bangladesh"}, "ISO"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, errs, code := run(t, dir, append([]string{"metadata", "set", "photos", "-o", "never"}, c.args...)...)
+			if code == 0 || !strings.Contains(errs, c.want) {
+				t.Errorf("want failure mentioning %q; code=%d stderr=%q", c.want, code, errs)
+			}
+			if _, err := os.Stat(filepath.Join(dir, "never")); err == nil {
+				t.Error("nothing may be written when validation fails")
+			}
+		})
+	}
+	// dry run validates exactly like a real run
+	if _, errs, code := run(t, dir, "metadata", "set", "photos", "-o", "never", "--tag", "Bogus:Nope=1", "--dry-run"); code == 0 || !strings.Contains(errs, "not a tag") {
+		t.Errorf("dry run must validate tags: %q", errs)
+	}
+}
+
+func TestInfoAllAndTagFilter(t *testing.T) {
+	testutil.RequireExifTool(t)
+	dir := project(t)
+	run(t, dir, "metadata", "set", "photos/a.jpg", "-o", "m", "--creator", "Alice")
+
+	out, _, code := run(t, dir, "info", "m/a.jpg", "--all")
+	if code != 0 || !strings.Contains(out, "[IFD0]") || !strings.Contains(out, "Artist") || !strings.Contains(out, "[File]") || strings.Count(out, "\n") < 20 {
+		t.Errorf("--all should list every group:\n%s", out)
+	}
+	out, _, _ = run(t, dir, "info", "m/a.jpg", "--tag", "artist", "--tag", "xmp-dc:*")
+	if !strings.Contains(out, "Alice") || strings.Contains(out, "[File]") || strings.Count(out, "\n") > 6 {
+		t.Errorf("--tag must filter:\n%s", out)
+	}
+	if out, _, _ := run(t, dir, "info", "m/a.jpg", "--tag", "NoSuchTagAnywhere"); !strings.Contains(out, "no matching tags") {
+		t.Errorf("empty filter result must say so:\n%s", out)
+	}
+	if out, _, _ := run(t, dir, "metadata", "show", "m/a.jpg", "--tag", "Artist"); !strings.Contains(out, "[IFD0]") || strings.Contains(out, "Instructions") {
+		t.Errorf("metadata show --tag:\n%s", out)
+	}
+	v := showJSON(t, dir, "info", "m/a.jpg", "--all")
+	if tags, ok := v[0]["tags"].(map[string]any); !ok || len(tags) < 10 || tags["IFD0:Artist"] != "Alice" {
+		t.Errorf("json --all: %v", v[0]["tags"])
+	}
+	if v := showJSON(t, dir, "info", "m/a.jpg"); v[0]["tags"] != nil {
+		t.Error("tags must not be present unless requested")
+	}
+}
+
+func TestMetadataTagsCommand(t *testing.T) {
+	testutil.RequireExifTool(t)
+	dir := t.TempDir()
+	out, _, code := run(t, dir, "metadata", "tags", "copyright")
+	if code != 0 || !strings.Contains(out, "IPTC") || !strings.Contains(out, "CopyrightNotice") || !strings.Contains(out, "writable tag(s)") {
+		t.Errorf("tags copyright:\n%s", out)
+	}
+	out, _, _ = run(t, dir, "metadata", "tags", "--group", "XMP-dc", "--format", "json")
+	var tags []struct{ Group, Name string }
+	if err := json.Unmarshal([]byte(out), &tags); err != nil || len(tags) < 10 {
+		t.Fatalf("%v\n%.200s", err, out)
+	}
+	for _, tg := range tags {
+		if tg.Group != "XMP-dc" {
+			t.Errorf("group filter leaked %v", tg)
+		}
+	}
+	if out, _, _ := run(t, dir, "metadata", "tags", "zzzznotatag"); !strings.Contains(out, "No matching tags") {
+		t.Errorf("%s", out)
+	}
+}
+
+const extPreset = `version: 1
+name: ext
+metadata:
+  creator: Preset Person
+  city: Dhaka
+  rating: 3
+  contact:
+    email: preset@example.com
+    city: Dhaka
+  tags:
+    Comment: from preset
+    XMP-dc:Format: image/jpeg
+  remove: [XMP-xmp:Label]
+export:
+  directory: ./export
+`
+
+func TestProcessPresetWithExtendedMetadataAndOverrides(t *testing.T) {
+	testutil.RequireExifTool(t)
+	dir := project(t)
+	os.WriteFile(filepath.Join(dir, "presets", "ext.yaml"), []byte(extPreset), 0o644)
+
+	if out, _, code := run(t, dir, "preset", "validate", "ext"); code != 0 || !strings.Contains(out, "OK") {
+		t.Fatalf("validate: %s", out)
+	}
+	if _, errs, code := run(t, dir, "process", "photos/a.jpg", "-p", "ext", "--no-watermark"); code != 0 {
+		t.Fatal(errs)
+	}
+	v := showJSON(t, dir, "info", "export/a.jpg", "--tag", "Comment", "--tag", "XMP-dc:Format")[0]
+	m := v["metadata"].(map[string]any)
+	if m["creator"] != "Preset Person" || m["city"] != "Dhaka" || m["rating"] != float64(3) || m["contact"].(map[string]any)["email"] != "preset@example.com" {
+		t.Errorf("preset metadata: %v", m)
+	}
+	if tags := v["tags"].(map[string]any); tags["File:Comment"] != "from preset" || tags["XMP-dc:Format"] != "image/jpeg" {
+		t.Errorf("preset tags: %v", tags)
+	}
+
+	// flags override per field / merge per tag
+	if _, errs, code := run(t, dir, "process", "photos/a.jpg", "-p", "ext", "--no-watermark", "-o", "o2",
+		"--city", "Khulna", "--rating", "1", "--contact-phone", "123", "--tag", "Comment=from flag", "--strip", "gps"); code != 0 {
+		t.Fatal(errs)
+	}
+	v = showJSON(t, dir, "info", "o2/a.jpg", "--tag", "Comment", "--tag", "XMP-dc:Format")[0]
+	m = v["metadata"].(map[string]any)
+	c := m["contact"].(map[string]any)
+	if m["city"] != "Khulna" || m["rating"] != float64(1) || m["creator"] != "Preset Person" || c["phone"] != "123" || c["email"] != "preset@example.com" {
+		t.Errorf("flags must override fields and keep the rest: %v", m)
+	}
+	if tags := v["tags"].(map[string]any); tags["File:Comment"] != "from flag" || tags["XMP-dc:Format"] != "image/jpeg" {
+		t.Errorf("--tag must merge per tag: %v", tags)
+	}
+}
+
+func TestPresetValidateCatchesTagTypos(t *testing.T) {
+	testutil.RequireExifTool(t)
+	dir := project(t)
+	os.WriteFile(filepath.Join(dir, "presets", "typo.yaml"), []byte("version: 1\nmetadata:\n  tags:\n    Artsit: x\n  remove: [Comment, NopeNope]\n"), 0o644)
+	out, _, code := run(t, dir, "preset", "validate", "typo")
+	if code == 0 || !strings.Contains(out, "INVALID") || !strings.Contains(out, "Artsit") || !strings.Contains(out, "NopeNope") {
+		t.Errorf("validate must report unknown tags (exit %d):\n%s", code, out)
+	}
+	// and the run itself refuses before writing anything
+	if _, errs, code := run(t, dir, "process", "photos", "-p", "typo", "--no-watermark"); code == 0 {
+		t.Errorf("process must fail on a bad tag: %s", errs)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "export")); err == nil {
+		t.Error("nothing may be written")
+	}
+}
+
+func TestPresetShowRoundTrips(t *testing.T) {
+	dir := project(t)
+	os.WriteFile(filepath.Join(dir, "presets", "ext.yaml"), []byte(extPreset), 0o644)
+	out, _, code := run(t, dir, "preset", "show", "ext")
+	if code != 0 || !strings.Contains(out, "email: preset@example.com") || !strings.Contains(out, "Comment: from preset") {
+		t.Fatalf("show:\n%s", out)
+	}
+}

@@ -153,3 +153,125 @@ func TestFindAndList(t *testing.T) {
 		t.Errorf("List = %v", got)
 	}
 }
+
+const extended = `
+version: 1
+name: ext
+metadata:
+  creator: Me
+  headline: H
+  writer: W
+  owner: O
+  web_statement: https://example.com/license
+  label: Green
+  rating: 4
+  location: Ramna
+  city: Dhaka
+  state: Dhaka
+  country: Bangladesh
+  country_code: BD
+  latitude: 23.8103
+  longitude: 90.4125
+  altitude: -3.5
+  date_taken: 2026-05-01T10:30:00+06:00
+  contact:
+    email: me@example.com
+    phone: "+8801700000000"
+    url: https://example.com
+    address: 1 Main St
+    city: Dhaka
+    region: Dhaka
+    postal_code: "1207"
+    country: Bangladesh
+  tags:
+    Comment: hello
+    XMP-dc:Subject: [a, b]
+    Orientation#: 1
+  remove:
+    - XMP-xmp:Label
+    - "GPS*"
+  strip: gps
+`
+
+func TestExtendedMetadataSection(t *testing.T) {
+	p, err := Parse([]byte(extended))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Validate(); err != nil {
+		t.Fatalf("valid extended preset rejected: %v", err)
+	}
+	m := p.Metadata
+	if m.Rating == nil || *m.Rating != 4 || m.Latitude == nil || *m.Latitude != 23.8103 || m.Altitude == nil || *m.Altitude != -3.5 {
+		t.Errorf("numbers: %+v", m)
+	}
+	if m.DateTaken != "2026-05-01T10:30:00+06:00" || m.Contact.PostalCode != "1207" || m.Contact.Email != "me@example.com" {
+		t.Errorf("strings: %+v", m)
+	}
+	if len(m.Tags["XMP-dc:Subject"]) != 2 || m.Tags["Orientation#"][0] != "1" || m.Tags["Comment"][0] != "hello" {
+		t.Errorf("tags: %v", m.Tags)
+	}
+	if len(m.Remove) != 2 || m.Strip != "gps" {
+		t.Errorf("remove/strip: %v %q", m.Remove, m.Strip)
+	}
+}
+
+func TestExtendedMetadataRejectsTyposAndBadValues(t *testing.T) {
+	for name, doc := range map[string]string{
+		"unknown contact field": "version: 1\nmetadata:\n  contact:\n    emial: x\n",
+		"unknown field":         "version: 1\nmetadata:\n  latitud: 1\n",
+		"tags not a map":        "version: 1\nmetadata:\n  tags: [a, b]\n",
+		"tag value is a map":    "version: 1\nmetadata:\n  tags:\n    X: {a: b}\n",
+		"rating not a number":   "version: 1\nmetadata:\n  rating: lots\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Parse([]byte(doc)); err == nil {
+				t.Fatal("must be rejected at parse time")
+			}
+		})
+	}
+	p, _ := Parse([]byte(`
+version: 1
+metadata:
+  rating: 8
+  latitude: 100
+  longitude: 0
+  date_taken: whenever
+  strip: everything
+  country_code: Bangladesh
+  tags:
+    "bad name": x
+    all: y
+  remove: ["a=b"]
+`))
+	err := p.Validate()
+	if err == nil {
+		t.Fatal("expected validation errors")
+	}
+	for _, want := range []string{"rating", "latitude", "date_taken", "strip", "country_code", "metadata.tags.bad name", "metadata.tags.all", "metadata.remove[0]"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("missing %q in:\n%v", want, err)
+		}
+	}
+}
+
+func TestExtendedPresetRoundTripsThroughYAML(t *testing.T) {
+	p, err := Parse([]byte(extended))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := yamlMarshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := Parse(out)
+	if err != nil {
+		t.Fatalf("re-parse of 'preset show' output failed: %v\n%s", err, out)
+	}
+	if err := again.Validate(); err != nil {
+		t.Fatalf("re-parsed preset invalid: %v", err)
+	}
+	if *again.Metadata.Rating != 4 || again.Metadata.Tags["XMP-dc:Subject"][1] != "b" || again.Metadata.Contact.City != "Dhaka" {
+		t.Errorf("round trip lost data:\n%s", out)
+	}
+}

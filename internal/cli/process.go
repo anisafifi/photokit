@@ -33,8 +33,9 @@ same services as the direct commands.
 
 --preset takes a file path, or a bare name that is looked up in ./presets and
 the preset directories from your config. Flags override the preset: metadata
-flags replace the preset's values, watermark flags change individual signature
-settings, --output replaces export.directory.
+flags replace the preset's values (--tag merges per tag, --remove adds to the preset's list),
+watermark flags change individual signature settings, --output replaces
+export.directory.
 
 Originals are never modified: a preset can only write copies.`,
 		Example: `  photokit process ./photos --preset ./presets/default.yaml --output ./export
@@ -56,9 +57,13 @@ Originals are never modified: a preset can only write copies.`,
 			}
 			e.log.Debug("preset loaded", "path", path, "name", p.Name)
 
+			flagMeta, err := md.value(cmd)
+			if err != nil {
+				return err
+			}
 			spec := app.Spec{
 				Inputs: args, Recursive: in.recursive, Include: in.include, Exclude: in.exclude,
-				Metadata:       p.Metadata.Override(md.value()),
+				Metadata:       p.Metadata.Override(flagMeta),
 				AppendKeywords: false,
 				Export: app.ExportSpec{
 					Format: p.ExportFormat(), Quality: p.QualityOrDefault(), Suffix: p.Export.Suffix,

@@ -16,10 +16,8 @@ func (p *Preset) Validate() error {
 		bad("version must be %d (got %d)", CurrentVersion, p.Version)
 	}
 
-	for i, k := range p.Metadata.Keywords {
-		if k == "" {
-			bad("metadata.keywords[%d] is empty", i)
-		}
+	if err := p.Metadata.Validate(); err != nil {
+		errs = append(errs, err)
 	}
 
 	if p.Watermark != nil {

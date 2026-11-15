@@ -15,8 +15,14 @@ import (
 type failingEngine struct{ msg string }
 
 func (f failingEngine) Read(context.Context, string) (*domain.Metadata, error) { return nil, nil }
-func (f failingEngine) Inspect(context.Context, string) (*domain.Info, error)  { return nil, nil }
-func (f failingEngine) Copy(context.Context, string, string) error             { return nil }
+func (f failingEngine) Inspect(context.Context, string, metadata.InspectOptions) (*domain.Info, error) {
+	return nil, nil
+}
+func (f failingEngine) CheckTags(context.Context, domain.Metadata) error { return nil }
+func (f failingEngine) ListTags(context.Context, string) ([]metadata.TagInfo, error) {
+	return nil, nil
+}
+func (f failingEngine) Copy(context.Context, string, string) error { return nil }
 func (f failingEngine) Write(_ context.Context, path string, _ domain.Metadata, _ metadata.WriteOptions) error {
 	return errors.New(f.msg + " - " + path)
 }

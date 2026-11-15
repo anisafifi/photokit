@@ -38,7 +38,7 @@ processed photos/IMG_002.jpg -> export/IMG_002.jpg [watermark+metadata]
 | | |
 |---|---|
 | **Non-destructive** | Sources are only ever read. Results are written as copies, through temporary files and atomic renames, so an interrupted run never leaves a half-written photo. |
-| **Metadata** | Read and write creator, copyright, rights, title, description, keywords, credit, source and instructions across **EXIF, IPTC and XMP** at once, powered by ExifTool. |
+| **Metadata** | Read and write creator, copyright, captions, keywords, rating, location, GPS, capture date and contact details across **EXIF, IPTC and XMP** at once, plus **any of ExifTool's ~7,000 writable tags** (`--tag`), tag removal and GPS/all stripping, powered by ExifTool. |
 | **Signature watermark** | Composite a transparent PNG on JPEG and PNG images: 9 anchor positions, opacity, relative scale, margin. Alpha is preserved and EXIF orientation is respected. |
 | **Metadata survives** | Camera, lens, capture time, GPS and copyright are restored onto watermarked images. Thumbnails (which would leak the un-watermarked picture) are not. |
 | **Presets** | Describe a workflow once in YAML. Validated before anything runs, unknown fields rejected, CLI flags can override any value. |
@@ -84,7 +84,6 @@ On macOS, a downloaded binary may be quarantined by Gatekeeper. Clear it with `x
 
 ```bash
 git clone <repository-url> photokit && cd photokit
-go mod tidy
 make build            # produces ./photokit
 make install          # or install into $GOBIN
 ```
@@ -169,10 +168,11 @@ Safety rules PhotoKit enforces:
 photokit
 ├── init                    Create a starter project
 ├── version                 Print version and check for ExifTool
-├── info                    Show camera details and metadata
+├── info                    Show camera details and metadata (--all for every tag)
 ├── metadata
 │   ├── show                Show only copyright / descriptive metadata
-│   └── set                 Write metadata to copies of your photos
+│   ├── set                 Write metadata to copies of your photos
+│   └── tags                List every tag ExifTool can write
 ├── watermark
 │   ├── apply               Apply a signature to copies of your photos
 │   └── preview             Render one image to check placement
@@ -233,6 +233,19 @@ photokit info photo.jpg
 photokit info ./photos --recursive --format json
 ```
 
+| Flag | Description |
+|---|---|
+| `--all` | Show **every** tag ExifTool finds, grouped (EXIF, IPTC, XMP, MakerNotes, ICC, File, ...) |
+| `--tag PATTERN` | Show only matching tags. Repeatable. `Artist` matches that tag in any group, `XMP-dc:Creator` matches one group, wildcards work (`"XMP-dc:*"`, `"*GPS*"`). Matching is case-insensitive |
+
+```bash
+photokit info photo.jpg --all
+photokit info photo.jpg --tag Artist --tag "XMP-dc:*" --tag "*GPS*"
+photokit info ./photos -r --tag Lens* --format json     # JSON gains a "tags" object keyed Group:Name
+```
+
+The `tags` object only appears when you ask for it with `--all` or `--tag`.
+
 Unreadable or corrupt files are listed with an `error:` and make the exit code non-zero. A file whose content doesn't match its extension (for example a text file named `.jpg`) counts as corrupt.
 
 ### `photokit metadata show`
@@ -241,27 +254,47 @@ Like `info`, but prints only the descriptive and copyright fields. Handy for che
 
 ```bash
 photokit metadata show ./export --recursive
+photokit metadata show photo.jpg --tag "*Rights*"      # same --all / --tag flags as info
 ```
+
+Extended fields (headline, rating, location, GPS, contact ...) are shown only when they are set.
 
 ### `photokit metadata set`
 
 Writes metadata to copies of your photos (or, with `--in-place`, to the originals).
+
+Named fields are written **consistently to EXIF, IPTC and XMP**. Anything else ExifTool supports is reachable with `--tag`. Only the fields you pass are changed, and at least one is required.
 
 | Flag | Description |
 |---|---|
 | `--creator` | Creator / photographer |
 | `--copyright` | Copyright notice, e.g. `"© 2026 Your Name"` |
 | `--rights` | Usage terms, e.g. `"All rights reserved"` |
-| `--title` | Title |
+| `--web-statement` | URL of the license / rights statement |
+| `--title`, `--headline` | Title and headline |
 | `--description` | Caption / description |
 | `--keywords` | Keyword. Repeat the flag or comma-separate |
 | `--append-keywords` | Add to existing keywords instead of replacing them |
-| `--credit` | Credit line |
-| `--source` | Source |
-| `--instructions` | Special instructions |
+| `--credit`, `--source`, `--instructions` | IPTC credit line, source, special instructions |
+| `--writer` | Caption writer |
+| `--owner` | Image owner |
+| `--rating N` | Star rating `0`-`5` (`0` is written, not ignored) |
+| `--label TEXT` | Colour label, e.g. `Green` |
+| `--location`, `--city`, `--state`, `--country` | Where the photo was taken |
+| `--country-code CC` | ISO country code, e.g. `BD` (stored upper-case) |
+| `--latitude`, `--longitude` | Decimal degrees. South and west are **negative**. Must be given together. `0` is valid |
+| `--altitude M` | Metres, negative below sea level. Needs latitude and longitude |
+| `--date-taken` | `"2026-05-01"`, `"2026-05-01 10:30:00"`, `"2026-05-01T10:30:00+06:00"` or `2026:05:01 10:30:00`. A zone also sets the EXIF offset tags |
+| `--contact-email`, `--contact-phone`, `--contact-url` | Photographer contact details (IPTC Core) |
+| `--contact-address`, `--contact-city`, `--contact-region`, `--contact-postal-code`, `--contact-country` | Photographer contact address |
+| `--tag NAME=VALUE` | **Any** writable ExifTool tag. Repeatable. Repeating the same name builds a list. An empty value (`--tag NAME=`) deletes the tag |
+| `--remove NAME` | Delete a tag (wildcards allowed, e.g. `"XMP-dc:*"`). Repeatable |
+| `--strip gps\|all` | `gps` removes all location data. `all` removes every tag except colour profile and orientation, then writes whatever else you passed |
 | `--in-place` | Modify the originals. Cannot be combined with `--output` or `--suffix` |
 
-Only the fields you pass are changed. At least one is required.
+**Order of operations:** strip, then remove, then named fields, then `--tag`. So `--tag` wins over a named field, and `--strip all --copyright X` leaves just the copyright.
+
+**Validated before anything is written.** Tag names are checked against the list ExifTool can actually write, so a typo fails fast with a suggestion (`Artsit` -> `did you mean Artist?`) instead of being silently ignored. Latitude/longitude ranges, ratings and dates are checked too, and `--dry-run` validates exactly like a real run. Find tag names with [`photokit metadata tags`](#photokit-metadata-tags).
 
 ```bash
 photokit metadata set ./photos --recursive \
@@ -275,6 +308,32 @@ photokit metadata set ./photos --in-place --creator "Your Name"
 
 # Add keywords without losing the existing ones
 photokit metadata set ./photos --append-keywords --keywords wedding,2026 -o ./tagged
+
+# Location, GPS and capture date
+photokit metadata set ./trip -r --city Dhaka --country Bangladesh --country-code BD \
+  --latitude 23.8103 --longitude 90.4125 --altitude 12 --date-taken "2026-05-01 10:30:00+06:00"
+
+# Rating, label and contact details
+photokit metadata set ./picks --rating 5 --label Green \
+  --contact-email me@example.com --contact-url https://example.com
+
+# Any ExifTool tag, lists, deletions
+photokit metadata set ./photos --tag "Comment=Shot on film" \
+  --tag "XMP-dc:Subject=street" --tag "XMP-dc:Subject=night"
+photokit metadata set ./photos --remove Comment --remove "XMP-dc:*"
+
+# Make copies safe to publish: drop GPS (everything else stays)
+photokit metadata set ./photos --strip gps -o ./safe-to-publish
+```
+
+### `photokit metadata tags`
+
+Lists every tag ExifTool can write (about 7,000), with its group, so you know what to pass to `--tag`, `--remove` or a preset's `tags:` / `remove:`.
+
+```bash
+photokit metadata tags copyright            # substring filter (case-insensitive)
+photokit metadata tags --group XMP-dc       # one group: EXIF, IPTC, XMP, XMP-dc, GPS, ...
+photokit metadata tags --group IPTC --format json
 ```
 
 ### `photokit watermark apply`
@@ -326,7 +385,7 @@ photokit process ./photos --preset default --dry-run
 | `--quality` | JPEG quality (overrides `export.quality`) |
 | `--suffix` | Output name suffix (overrides `export.suffix`) |
 | `-o`, `--output` | Output directory (overrides `export.directory`) |
-| metadata flags | `--creator`, `--copyright`, `--rights`, `--title`, `--description`, `--keywords`, `--credit`, `--source`, `--instructions` replace the preset's values |
+| metadata flags | Every `metadata set` flag (`--creator`, `--rating`, `--latitude`, `--contact-email`, `--tag`, `--remove`, `--strip`, ...) overrides the preset. See [override rules](#overriding-a-preset-from-the-command-line) |
 | watermark flags | `--image`, `--position`, `--opacity`, `--scale`, `--margin` override individual preset settings |
 
 See [override rules](#overriding-a-preset-from-the-command-line).
@@ -357,6 +416,12 @@ metadata:
   rights: "All rights reserved"
   keywords:
     - photography
+  # Everything below is optional. See presets/full.yaml for the complete list.
+  # rating: 5
+  # city: Dhaka
+  # contact: { email: me@example.com }
+  # tags: { Comment: "Shot on film" }
+  # strip: gps
 
 watermark:
   enabled: true
@@ -380,8 +445,18 @@ export:
 |---|---|---|---|
 | `version` | int | required | Must be `1` |
 | `name`, `description` | string | | Shown by `preset list` |
-| `metadata.creator` … `metadata.instructions` | string | | Same fields as `metadata set`. Omitted fields are left untouched |
+| `metadata.creator`, `copyright`, `rights`, `title`, `description`, `credit`, `source`, `instructions`, `headline`, `writer`, `owner`, `web_statement`, `label` | string | | Same fields as `metadata set`. Omitted fields are left untouched |
 | `metadata.keywords` | list | | Replaces existing keywords. Empty entries are rejected |
+| `metadata.rating` | int | | `0`-`5` |
+| `metadata.location`, `city`, `state`, `country` | string | | Where the photo was taken |
+| `metadata.country_code` | string | | 2-3 letter ISO code |
+| `metadata.latitude`, `longitude` | float | | Decimal degrees, south/west negative. Must be given together |
+| `metadata.altitude` | float | | Metres. Needs latitude and longitude |
+| `metadata.date_taken` | string | | Same formats as `--date-taken`. Quote it in YAML |
+| `metadata.contact` | map | | `email`, `phone`, `url`, `address`, `city`, `region`, `postal_code`, `country` |
+| `metadata.tags` | map | | Any writable ExifTool tag: `Name: value`. A list value writes a list. `null` or `""` deletes the tag |
+| `metadata.remove` | list | | Tags to delete (wildcards allowed) |
+| `metadata.strip` | enum | `none` | `none`, `gps` or `all` |
 | `watermark.enabled` | bool | `true` when the section exists | `false` disables the signature without deleting the section |
 | `watermark.image` | path | required if enabled | Transparent PNG. Relative paths resolve against the **preset file's directory** |
 | `watermark.position` | enum | `bottom-right` | One of the nine anchors |
@@ -396,7 +471,7 @@ export:
 
 ### Rules
 
-- **Validated before processing.** An invalid preset stops the run before any file is touched.
+- **Validated before processing.** An invalid preset stops the run before any file is touched. Tag names in `tags:` and `remove:` are checked against ExifTool, both by `preset validate` and by `process`.
 - **Unknown fields are rejected**, so a typo like `opacty: 0.5` is an error rather than a silently ignored setting.
 - **The schema is versioned** (`version: 1`) so it can evolve safely.
 - **Relative asset paths resolve against the preset file**, so a preset works no matter where you run it from.
@@ -408,7 +483,11 @@ Flags always win over the preset:
 
 | You pass | Effect |
 |---|---|
-| `--creator "X"` (any metadata flag) | Replaces that field's preset value. Other preset fields stay |
+| `--creator "X"` (any named metadata flag) | Replaces that field's preset value. Other preset fields stay |
+| `--contact-phone "X"` | Replaces just that contact field. Other contact fields stay |
+| `--tag NAME=VALUE` | Merges per tag: replaces that tag, keeps the preset's other tags |
+| `--remove NAME` | Adds to the preset's `remove` list |
+| `--strip gps` | Replaces the preset's `strip` |
 | `--opacity 0.5` (any watermark flag) | Changes only that setting; the rest still comes from the preset |
 | `--image other.png` on a preset *without* a watermark | Enables a watermark using default placement |
 | `--no-watermark` | Skips the signature. Cannot be combined with watermark flags |
@@ -456,17 +535,25 @@ bottom-left   bottom-center   bottom-right
 
 PhotoKit's metadata model is independent of any one standard. When it writes a value, it writes it **explicitly and identically to every standard that can hold it**, so EXIF, IPTC and XMP never contradict each other.
 
-| Field | EXIF / IFD0 | IPTC | XMP |
+| Field | EXIF | IPTC | XMP |
 |---|---|---|---|
 | `creator` | `Artist` | `By-line` | `dc:Creator` |
 | `copyright` | `Copyright` | `CopyrightNotice` | `dc:Rights` |
 | `rights` | | | `xmpRights:UsageTerms` |
+| `web_statement` | | | `xmpRights:WebStatement` |
 | `description` | `ImageDescription` | `Caption-Abstract` | `dc:Description` |
 | `title` | | `ObjectName` | `dc:Title` |
+| `headline` | | `Headline` | `photoshop:Headline` |
 | `keywords` | | `Keywords` | `dc:Subject` |
-| `credit` | | `Credit` | `photoshop:Credit` |
-| `source` | | `Source` | `photoshop:Source` |
-| `instructions` | | `SpecialInstructions` | `photoshop:Instructions` |
+| `credit`, `source`, `instructions` | | `Credit`, `Source`, `SpecialInstructions` | `photoshop:*` |
+| `writer` | | `Writer-Editor` | `photoshop:CaptionWriter` |
+| `owner` | `OwnerName` | | `aux:OwnerName` |
+| `rating` | `Rating`, `RatingPercent` | | `xmp:Rating` |
+| `label` | | | `xmp:Label` |
+| `location`, `city`, `state`, `country`, `country_code` | | `Sub-location`, `City`, `Province-State`, `Country-PrimaryLocationName`, `Country-PrimaryLocationCode` | `iptcCore:Location`, `photoshop:City`, `photoshop:State`, `photoshop:Country`, `iptcCore:CountryCode` |
+| `latitude`, `longitude`, `altitude` | `GPSLatitude`/`Ref`, `GPSLongitude`/`Ref`, `GPSAltitude`/`Ref` | | `exif:GPS*` |
+| `date_taken` | `DateTimeOriginal`, `CreateDate`, `OffsetTime*` | `DateCreated`, `TimeCreated` | `exif:`, `xmp:CreateDate`, `photoshop:DateCreated` |
+| `contact.*` | | | `iptcCore:CreatorWorkEmail`, `CreatorWorkTelephone`, `CreatorWorkURL`, `CreatorAddress`, `CreatorCity`, `CreatorRegion`, `CreatorPostalCode`, `CreatorCountry` |
 
 Notes:
 
@@ -475,6 +562,29 @@ Notes:
 - When reading, the first non-empty value across standards wins (PNG files' native text chunks are also understood).
 - Keywords replace the existing set by default; use `--append-keywords` to add instead.
 - Multi-line values are flattened to a single line.
+- GPS is written the way EXIF requires (absolute value plus `N/S/E/W` reference, and altitude reference `0` or `1`) and as signed decimals in XMP, so southern/western/below-sea-level values come back with the right sign.
+
+### Anything else: raw ExifTool tags
+
+PhotoKit has no named flag for most of ExifTool's ~7,000 writable tags, and doesn't need one. Use `--tag` (or a preset's `tags:`) with ExifTool's own names:
+
+| Form | Meaning |
+|---|---|
+| `Comment=hi` | Tag `Comment`, in whichever group ExifTool picks |
+| `XMP-dc:Format=image/jpeg` | A specific group (`Group:Tag`). `XMP-dc`, `IPTC`, `IFD0`, `ExifIFD`, `GPS` ... |
+| `EXIF:IFD0:Make=...` | Family-0 and family-1 groups can be combined |
+| `GPSAltitudeRef#=1` | A trailing `#` writes the raw numeric value instead of the printable one |
+| `Subject=a` `Subject=b` (repeat) | A list tag. Repeating the name builds the list |
+| `Comment=` | An empty value deletes the tag |
+
+Discover names with `photokit metadata tags FILTER`, and inspect what a file contains with `photokit info FILE --all`. Names are verified against ExifTool's writable list before any file is touched. Anything that isn't a plain tag name (such as ExifTool command options like `csv`) is rejected.
+
+### Privacy: `--strip`
+
+| Mode | Removes |
+|---|---|
+| `gps` | All GPS tags in EXIF and XMP. Everything else is kept |
+| `all` | Every tag. Colour profile and orientation are kept so the image still displays correctly. Combine with other flags to write fresh metadata afterwards |
 
 ## Supported formats
 
@@ -645,6 +755,8 @@ photokit info ./export --recursive
 | `duplicate output path` | Two inputs map to the same output name. Process them separately into different directories, or process their common parent with `--recursive` so folder structure is mirrored |
 | `skipped ... not supported for raw files` | Expected: RAW files can't be rendered. Use `--no-watermark` (or `metadata set`) to write metadata to them |
 | `watermark.image: cannot read ...` | The signature path is wrong. Paths in a preset are relative to the preset file, not your working directory. Run `photokit preset validate` |
+| `"X" is not a tag ExifTool can write` | A typo or a read-only tag. The message suggests close matches. Find valid names with `photokit metadata tags X` |
+| `latitude and longitude must be set together` | Give both `--latitude` and `--longitude` (and `--altitude` only with both) |
 | `unknown field` / `field ... not found` in a preset | A typo in a preset key. Unknown fields are rejected on purpose. Compare with [the schema](#schema) |
 | `X is not a valid JPEG file (content looks like TXT)` | The file is corrupt or mislabelled |
 | Signature is placed on the "wrong" side | Placement uses the *displayed* orientation. Check the photo's EXIF orientation with `photokit info`, and use `watermark preview` |

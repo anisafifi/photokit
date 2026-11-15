@@ -153,9 +153,15 @@ func (f *FakeEngine) Read(context.Context, string) (*domain.Metadata, error) {
 }
 
 // Inspect implements metadata.Engine.
-func (f *FakeEngine) Inspect(_ context.Context, path string) (*domain.Info, error) {
+func (f *FakeEngine) Inspect(_ context.Context, path string, _ metadata.InspectOptions) (*domain.Info, error) {
 	return &domain.Info{Path: path}, nil
 }
+
+// CheckTags implements metadata.Engine (the fake accepts every tag).
+func (f *FakeEngine) CheckTags(context.Context, domain.Metadata) error { return nil }
+
+// ListTags implements metadata.Engine.
+func (f *FakeEngine) ListTags(context.Context, string) ([]metadata.TagInfo, error) { return nil, nil }
 
 // Write implements metadata.Engine.
 func (f *FakeEngine) Write(ctx context.Context, _ string, _ domain.Metadata, _ metadata.WriteOptions) error {

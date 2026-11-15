@@ -17,7 +17,7 @@ type MetadataService struct {
 
 // Inspect reads metadata for every discovered file. Per-file failures are
 // reported in Info.Error rather than aborting the run.
-func (s *MetadataService) Inspect(ctx context.Context, inputs []string, opts batch.DiscoverOptions, jobs int) ([]domain.Info, error) {
+func (s *MetadataService) Inspect(ctx context.Context, inputs []string, opts batch.DiscoverOptions, jobs int, inspect metadata.InspectOptions) ([]domain.Info, error) {
 	if len(inputs) == 0 {
 		return nil, domain.Invalidf("no input files or directories given")
 	}
@@ -27,7 +27,7 @@ func (s *MetadataService) Inspect(ctx context.Context, inputs []string, opts bat
 	}
 	infos := make([]domain.Info, len(photos))
 	batch.Run(ctx, photos, jobs, func(ctx context.Context, i int, ph domain.Photo) {
-		info, err := s.Engine.Inspect(ctx, ph.Path)
+		info, err := s.Engine.Inspect(ctx, ph.Path, inspect)
 		if err != nil {
 			infos[i] = domain.Info{Path: ph.Path, Format: ph.Format.String(), Error: err.Error()}
 			return
@@ -47,7 +47,7 @@ func (s *MetadataService) Inspect(ctx context.Context, inputs []string, opts bat
 // says so explicitly).
 func (s *MetadataService) Set(ctx context.Context, spec Spec) (*domain.Report, error) {
 	if spec.Metadata.IsEmpty() {
-		return nil, domain.Invalidf("nothing to set: give at least one of --creator, --copyright, --rights, --description, --title, --keywords, --credit, --source, --instructions")
+		return nil, domain.Invalidf("nothing to set: give at least one metadata flag (for example --creator, --copyright, --keywords, --city, --latitude/--longitude, --rating, --tag NAME=VALUE, --remove NAME or --strip gps|all); see 'photokit metadata set --help'")
 	}
 	if spec.Watermark != nil {
 		return nil, fmt.Errorf("metadata set does not draw watermarks")

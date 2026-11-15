@@ -10,6 +10,7 @@ import (
 
 	"photokit/internal/app"
 	"photokit/internal/domain"
+	"photokit/internal/metadata"
 	"photokit/internal/testutil"
 )
 
@@ -59,7 +60,7 @@ func TestWatermarkKeepsSourcesAndMetadata(t *testing.T) {
 	}
 
 	outA := filepath.Join(f.out, "a.jpg")
-	info, err := et.Inspect(context.Background(), outA)
+	info, err := et.Inspect(context.Background(), outA, metadata.InspectOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +75,7 @@ func TestWatermarkKeepsSourcesAndMetadata(t *testing.T) {
 	}
 
 	outB := filepath.Join(f.out, "sub", "b.png") // structure mirrored
-	if i2, err := et.Inspect(context.Background(), outB); err != nil || i2.Metadata.Creator != "PngArtist" {
+	if i2, err := et.Inspect(context.Background(), outB, metadata.InspectOptions{}); err != nil || i2.Metadata.Creator != "PngArtist" {
 		t.Errorf("png metadata lost: %+v %v", i2, err)
 	}
 
@@ -96,7 +97,7 @@ func TestOrientationIsAppliedBeforePlacement(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := filepath.Join(f.out, "a.jpg")
-	info, _ := et.Inspect(context.Background(), out)
+	info, _ := et.Inspect(context.Background(), out, metadata.InspectOptions{})
 	if info.Width != 300 || info.Height != 400 {
 		t.Fatalf("output must be the upright 300x400, got %dx%d", info.Width, info.Height)
 	}
@@ -370,7 +371,7 @@ func TestConvertToPNG(t *testing.T) {
 		t.Fatalf("%v %+v", err, rep)
 	}
 	out := filepath.Join(f.out, "a.png")
-	info, err := et.Inspect(context.Background(), out)
+	info, err := et.Inspect(context.Background(), out, metadata.InspectOptions{})
 	if err != nil || info.Metadata.Creator != "Conv" {
 		t.Errorf("converted file lost metadata: %+v %v", info, err)
 	}

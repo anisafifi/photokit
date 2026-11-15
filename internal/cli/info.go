@@ -8,12 +8,14 @@ import (
 
 	"photokit/internal/app"
 	"photokit/internal/domain"
+	"photokit/internal/metadata"
 	"photokit/internal/output"
 )
 
 func newInfoCmd(e *env) *cobra.Command {
 	var (
 		in     inputFlags
+		rd     readFlags
 		format string
 		jobs   int
 	)
@@ -22,12 +24,17 @@ func newInfoCmd(e *env) *cobra.Command {
 		Short: "Show camera details and metadata of photos",
 		Long: `Show format, size, camera, lens, capture date and the managed copyright
 metadata (creator, copyright, rights, keywords…) of one or more photos.
-Nothing is modified.`,
+Nothing is modified.
+
+Use --all to list every tag ExifTool can read (EXIF, IPTC, XMP, MakerNotes,
+ICC, ...) and --tag to pick specific ones.`,
 		Example: `  photokit info photo.jpg
-  photokit info ./photos --recursive --format json`,
+  photokit info ./photos --recursive --format json
+  photokit info photo.jpg --all
+  photokit info photo.jpg --tag Artist --tag "XMP-dc:*" --tag "*GPS*"`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			infos, err := inspect(cmd, e, args, in, &jobs, format)
+			infos, err := inspect(cmd, e, args, in, &jobs, format, rd.options())
 			if err != nil {
 				return err
 			}
@@ -35,12 +42,13 @@ Nothing is modified.`,
 		},
 	}
 	in.add(cmd)
+	rd.add(cmd)
 	addFormatFlag(cmd, &format)
 	cmd.Flags().IntVar(&jobs, "jobs", 0, "number of files read in parallel (default from config, 4)")
 	return cmd
 }
 
-func inspect(cmd *cobra.Command, e *env, args []string, in inputFlags, jobs *int, format string) ([]domain.Info, error) {
+func inspect(cmd *cobra.Command, e *env, args []string, in inputFlags, jobs *int, format string, opts metadata.InspectOptions) ([]domain.Info, error) {
 	if _, err := domain.ParseOutputFormat(format); err != nil {
 		return nil, err
 	}
@@ -53,7 +61,7 @@ func inspect(cmd *cobra.Command, e *env, args []string, in inputFlags, jobs *int
 		return nil, err
 	}
 	svc := &app.MetadataService{Engine: eng}
-	return svc.Inspect(cmd.Context(), args, in.discover(), j)
+	return svc.Inspect(cmd.Context(), args, in.discover(), j, opts)
 }
 
 func finishInspect(cmd *cobra.Command, infos []domain.Info, format string, print func(w io.Writer, infos []domain.Info, format string) error) error {

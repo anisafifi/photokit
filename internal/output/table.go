@@ -1,13 +1,17 @@
 package output
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
 
 	"photokit/internal/domain"
+	"photokit/internal/metadata"
 )
 
 func tw(w io.Writer) *tabwriter.Writer { return tabwriter.NewWriter(w, 0, 4, 2, ' ', 0) }
@@ -39,6 +43,9 @@ func Infos(w io.Writer, infos []domain.Info, format string) error {
 	if len(infos) == 0 {
 		_, err := fmt.Fprintln(w, "No supported image files found.")
 		return err
+	}
+	if hasTags(infos) {
+		return tagSections(w, infos)
 	}
 	if len(infos) == 1 && infos[0].Error == "" {
 		return infoDetail(w, infos[0])
@@ -84,6 +91,11 @@ func infoDetail(w io.Writer, i domain.Info) error {
 
 func metadataRows(t *tabwriter.Writer, m domain.Metadata) {
 	row := func(k, v string) { fmt.Fprintf(t, "%s\t%s\n", k, dash(v)) }
+	opt := func(k, v string) {
+		if v != "" {
+			fmt.Fprintf(t, "%s\t%s\n", k, v)
+		}
+	}
 	row("Creator", m.Creator)
 	row("Copyright", m.Copyright)
 	row("Rights", m.Rights)
@@ -93,6 +105,157 @@ func metadataRows(t *tabwriter.Writer, m domain.Metadata) {
 	row("Credit", m.Credit)
 	row("Source", m.Source)
 	row("Instructions", m.Instructions)
+
+	// Extended fields only appear when the photo has them.
+	opt("Headline", m.Headline)
+	opt("Writer", m.Writer)
+	opt("Owner", m.Owner)
+	opt("Web statement", m.WebStatement)
+	opt("Label", m.Label)
+	if m.Rating != nil {
+		opt("Rating", fmt.Sprintf("%d / 5", *m.Rating))
+	}
+	opt("Location", m.Location)
+	opt("City", m.City)
+	opt("State", m.State)
+	opt("Country", join(m.Country, m.CountryCode, " ("))
+	if m.Latitude != nil && m.Longitude != nil {
+		opt("GPS", fmt.Sprintf("%.6f, %.6f", *m.Latitude, *m.Longitude))
+	}
+	if m.Altitude != nil {
+		opt("Altitude", fmt.Sprintf("%.1f m", *m.Altitude))
+	}
+	opt("Date taken", m.DateTaken)
+	c := m.Contact
+	opt("Contact email", c.Email)
+	opt("Contact phone", c.Phone)
+	opt("Contact web", c.URL)
+	opt("Contact address", strings.Join(nonEmpty(c.Address, c.City, c.Region, c.PostalCode, c.Country), ", "))
+}
+
+func join(a, code, open string) string {
+	switch {
+	case a != "" && code != "":
+		return a + open + code + ")"
+	case a != "":
+		return a
+	default:
+		return code
+	}
+}
+
+func nonEmpty(vals ...string) []string {
+	var out []string
+	for _, v := range vals {
+		if v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+func hasTags(infos []domain.Info) bool {
+	for _, i := range infos {
+		if i.Tags != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// formatValue renders a tag value as one line of text.
+func formatValue(v any) string {
+	switch t := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return strings.Join(strings.Fields(strings.ReplaceAll(t, "\n", " ")), " ")
+	case float64:
+		return strconv.FormatFloat(t, 'f', -1, 64)
+	case bool:
+		return strconv.FormatBool(t)
+	case []any:
+		parts := make([]string, 0, len(t))
+		for _, x := range t {
+			parts = append(parts, formatValue(x))
+		}
+		return strings.Join(parts, ", ")
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Sprint(v)
+	}
+	return string(b)
+}
+
+// tagSections prints every requested tag, grouped, one block per file.
+func tagSections(w io.Writer, infos []domain.Info) error {
+	for n, i := range infos {
+		if n > 0 {
+			fmt.Fprintln(w)
+		}
+		fmt.Fprintln(w, i.Path)
+		if i.Error != "" {
+			fmt.Fprintf(w, "  error: %s\n", i.Error)
+			continue
+		}
+		if len(i.Tags) == 0 {
+			fmt.Fprintln(w, "  (no matching tags)")
+			continue
+		}
+		keys := make([]string, 0, len(i.Tags))
+		for k := range i.Tags {
+			keys = append(keys, k)
+		}
+		sort.Slice(keys, func(a, b int) bool {
+			ga, ta := splitKey(keys[a])
+			gb, tb := splitKey(keys[b])
+			if ga != gb {
+				return strings.ToLower(ga) < strings.ToLower(gb)
+			}
+			return strings.ToLower(ta) < strings.ToLower(tb)
+		})
+		t := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
+		for _, k := range keys {
+			g, tag := splitKey(k)
+			fmt.Fprintf(t, "  [%s]\t%s\t%s\n", g, tag, trunc(formatValue(i.Tags[k]), 160))
+		}
+		if err := t.Flush(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func splitKey(k string) (group, tag string) {
+	if i := strings.Index(k, ":"); i >= 0 {
+		return k[:i], k[i+1:]
+	}
+	return "", k
+}
+
+// TagList prints writable tags.
+func TagList(w io.Writer, tags []metadata.TagInfo, format string) error {
+	if format == "json" {
+		if tags == nil {
+			tags = []metadata.TagInfo{}
+		}
+		return JSON(w, tags)
+	}
+	if len(tags) == 0 {
+		_, err := fmt.Fprintln(w, "No matching tags.")
+		return err
+	}
+	t := tw(w)
+	fmt.Fprintln(t, "GROUP\tTAG\tTYPE")
+	for _, ti := range tags {
+		fmt.Fprintf(t, "%s\t%s\t%s\n", ti.Group, ti.Name, dash(ti.Type))
+	}
+	if err := t.Flush(); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintf(w, "\n%d writable tag(s). Use them as NAME or Group:NAME with --tag / --remove.\n", len(tags))
+	return err
 }
 
 // Metadata prints only the managed metadata fields.
@@ -112,6 +275,9 @@ func Metadata(w io.Writer, infos []domain.Info, format string) error {
 	if len(infos) == 0 {
 		_, err := fmt.Fprintln(w, "No supported image files found.")
 		return err
+	}
+	if hasTags(infos) {
+		return tagSections(w, infos)
 	}
 	for n, i := range infos {
 		if n > 0 {

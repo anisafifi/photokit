@@ -90,6 +90,13 @@ func (s *Spec) Validate() error {
 			return err
 		}
 	}
+	if err := s.Metadata.Validate(); err != nil {
+		return err
+	}
+	if strings.EqualFold(s.Metadata.Strip, "none") {
+		s.Metadata.Strip = domain.StripNone
+	}
+	s.Metadata.Strip = strings.ToLower(s.Metadata.Strip)
 	if s.InPlace {
 		if s.OutputDir != "" {
 			return domain.Invalidf("--in-place and --output cannot be combined")
@@ -149,6 +156,12 @@ func (p *Processor) Run(ctx context.Context, spec Spec) (*domain.Report, error) 
 	start := time.Now()
 	if err := spec.Validate(); err != nil {
 		return nil, err
+	}
+	if !spec.Metadata.IsEmpty() {
+		// Fail the whole run up front on an unknown tag, before any file is touched.
+		if err := p.Engine.CheckTags(ctx, spec.Metadata); err != nil {
+			return nil, err
+		}
 	}
 	pl, err := p.buildPipeline(spec)
 	if err != nil {

@@ -86,7 +86,7 @@ func TestCopyRestoresCameraDropsOrientation(t *testing.T) {
 	if err := et.Copy(ctx, src, dst); err != nil {
 		t.Fatal(err)
 	}
-	info, err := et.Inspect(ctx, dst)
+	info, err := et.Inspect(ctx, dst, metadata.InspectOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +105,7 @@ func TestCopyRestoresCameraDropsOrientation(t *testing.T) {
 func TestInspectDimensions(t *testing.T) {
 	et := testutil.RequireExifTool(t)
 	path := testutil.WritePNG(t, filepath.Join(t.TempDir(), "a.png"), 40, 30)
-	info, err := et.Inspect(context.Background(), path)
+	info, err := et.Inspect(context.Background(), path, metadata.InspectOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
